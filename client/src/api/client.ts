@@ -12,39 +12,105 @@ import type {
 
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? '/api';
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
+// Custom error class for API errors
+export class APIError extends Error {
+  constructor(
+    public status: number,
+    public statusText: string,
+    message: string
+  ) {
+    super(message);
+    this.name = 'APIError';
   }
-  return res.json() as Promise<T>;
+}
+
+/**
+ * Type-safe JSON parsing with error handling
+ */
+async function parseJSON<T>(response: Response): Promise<T> {
+  try {
+    return (await response.json()) as T;
+  } catch (error) {
+    throw new APIError(
+      response.status,
+      response.statusText,
+      `Failed to parse response: ${error instanceof Error ? error.message : 'unknown error'}`
+    );
+  }
+}
+
+/**
+ * Core request handler with comprehensive error handling
+ */
+async function request<T>(
+  path: string,
+  options?: RequestInit
+): Promise<T> {
+  try {
+    const response = await fetch(`${BASE}${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+      ...options,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      const message = errorText || response.statusText || `HTTP ${response.status}`;
+      throw new APIError(response.status, response.statusText, message);
+    }
+
+    return await parseJSON<T>(response);
+  } catch (error) {
+    // Re-throw API errors as-is
+    if (error instanceof APIError) {
+      throw error;
+    }
+    // Wrap other errors
+    if (error instanceof TypeError) {
+      throw new APIError(0, 'NetworkError', `Network error: ${error.message}`);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Helper to safely encode query parameters
+ */
+function buildQueryString(params?: Record<string, string | number | boolean | undefined>): string {
+  if (!params) return '';
+  const filtered = Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {});
+  const qs = new URLSearchParams(
+    Object.entries(filtered).map(([k, v]) => [k, String(v)])
+  ).toString();
+  return qs ? `?${qs}` : '';
 }
 
 export const api = {
   getShelters: (params?: Record<string, string>): Promise<Shelter[]> => {
-    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    const qs = buildQueryString(params);
     return request<Shelter[]>(`/shelters${qs}`);
   },
 
   getResources: (params?: Record<string, string>): Promise<Resource[]> => {
-    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    const qs = buildQueryString(params);
     return request<Resource[]>(`/resources${qs}`);
   },
 
   getLiveResources: (): Promise<{ resources: Resource[]; popups: OutreachPopup[] }> =>
     request<{ resources: Resource[]; popups: OutreachPopup[] }>('/resources/live'),
 
-  getRecommendedShelters: (params: { lat: number; lng: number; tags?: string[] }): Promise<Shelter[]> => {
-    const query = new URLSearchParams({
-      lat: String(params.lat),
-      lng: String(params.lng),
-      ...(params.tags && params.tags.length ? { tags: params.tags.join(',') } : {}),
+  getRecommendedShelters: (params: {
+    lat: number;
+    lng: number;
+    tags?: string[];
+  }): Promise<Shelter[]> => {
+    const qs = buildQueryString({
+      lat: params.lat,
+      lng: params.lng,
+      ...(params.tags?.length && { tags: params.tags.join(',') }),
     });
-    return request<Shelter[]>(`/shelters/recommendations?${query.toString()}`);
+    return request<Shelter[]>(`/shelters/recommendations${qs}`);
   },
 
   getAlerts: (): Promise<CrisisAlert[]> => request<CrisisAlert[]>('/alerts'),
@@ -89,7 +155,9 @@ export const api = {
     }),
 
   getLegalFlow: (issue: string, city = 'National'): Promise<LegalHelpFlow> =>
-    request<LegalHelpFlow>(`/legal/flow?issue=${encodeURIComponent(issue)}&city=${encodeURIComponent(city)}`),
+    request<LegalHelpFlow>(
+      `/legal/flow?issue=${encodeURIComponent(issue)}&city=${encodeURIComponent(city)}`
+    ),
 
   updateResourceLiveStatus: (
     id: string,
@@ -168,14 +236,14 @@ export const api = {
     toLng: number;
     safeRoute?: boolean;
   }): Promise<TransitEta> => {
-    const qs = new URLSearchParams({
-      fromLat: String(params.fromLat),
-      fromLng: String(params.fromLng),
-      toLat: String(params.toLat),
-      toLng: String(params.toLng),
-      safeRoute: String(Boolean(params.safeRoute)),
+    const qs = buildQueryString({
+      fromLat: params.fromLat,
+      fromLng: params.fromLng,
+      toLat: params.toLat,
+      toLng: params.toLng,
+      safeRoute: Boolean(params.safeRoute),
     });
-    return request<TransitEta>(`/transit/eta?${qs.toString()}`);
+    return request<TransitEta>(`/transit/eta${qs}`);
   },
 
   trackEvent: (eventType: string, metadata?: Record<string, unknown>): Promise<{ ok: boolean }> =>

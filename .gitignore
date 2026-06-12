@@ -9,3 +9,7 @@ build/
 *.db-wal
 coverage/
 .vite/
+.vitest/
+*.lcov
+.nyc_output/
+

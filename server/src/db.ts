@@ -170,12 +170,78 @@ function initSchema(db: DatabaseSync) {
       created_at       TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    -- Shelter claim & verification system
+    CREATE TABLE IF NOT EXISTS shelter_claims (
+      id               TEXT PRIMARY KEY,
+      shelter_id       TEXT NOT NULL UNIQUE,
+      operator_email   TEXT NOT NULL,
+      operator_name    TEXT NOT NULL,
+      phone_number     TEXT,
+      verification_token TEXT UNIQUE,
+      verification_status TEXT NOT NULL DEFAULT 'pending',
+      verified_at      TEXT,
+      claimed_at       TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (shelter_id) REFERENCES shelters(id) ON DELETE CASCADE
+    );
+
+    -- Capacity triage system (🟢 open / 🟡 waitlist / 🔴 full)
+    CREATE TABLE IF NOT EXISTS shelter_capacity (
+      id               TEXT PRIMARY KEY,
+      shelter_id       TEXT NOT NULL UNIQUE,
+      status           TEXT NOT NULL DEFAULT 'open',
+      status_options   TEXT NOT NULL DEFAULT '["open", "waitlist", "full"]',
+      last_updated_by  TEXT NOT NULL DEFAULT 'system',
+      last_updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      secret_update_token TEXT UNIQUE,
+      FOREIGN KEY (shelter_id) REFERENCES shelters(id) ON DELETE CASCADE
+    );
+
+    -- User feedback loop for data quality
+    CREATE TABLE IF NOT EXISTS shelter_data_feedback (
+      id               TEXT PRIMARY KEY,
+      shelter_id       TEXT NOT NULL,
+      is_accurate      INTEGER NOT NULL,
+      feedback_type    TEXT,
+      message          TEXT,
+      submitted_at     TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (shelter_id) REFERENCES shelters(id) ON DELETE CASCADE
+    );
+
+    -- Flag inaccurate listings for review
+    CREATE TABLE IF NOT EXISTS shelter_accuracy_flags (
+      id               TEXT PRIMARY KEY,
+      shelter_id       TEXT NOT NULL UNIQUE,
+      inaccuracy_count INTEGER NOT NULL DEFAULT 0,
+      flagged_at       TEXT NOT NULL DEFAULT (datetime('now')),
+      flagged_reason   TEXT,
+      review_status    TEXT NOT NULL DEFAULT 'pending',
+      FOREIGN KEY (shelter_id) REFERENCES shelters(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_resource_live_resource ON resource_live_status(resource_id, updated_at);
     CREATE INDEX IF NOT EXISTS idx_feedback_shelter       ON shelter_feedback(shelter_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_popups_city_time       ON outreach_popups(city, starts_at, ends_at);
     CREATE INDEX IF NOT EXISTS idx_followthrough_time     ON follow_through(created_at);
     CREATE INDEX IF NOT EXISTS idx_event_metrics_type     ON event_metrics(event_type, created_at);
     CREATE INDEX IF NOT EXISTS idx_outreach_users_email   ON outreach_users(email);
+
+    -- Additional performance indexes for frequent queries
+    CREATE INDEX IF NOT EXISTS idx_shelters_rating       ON shelters(rating DESC);
+    CREATE INDEX IF NOT EXISTS idx_shelters_city_state   ON shelters(city, state);
+    CREATE INDEX IF NOT EXISTS idx_resources_city        ON resources(city);
+    CREATE INDEX IF NOT EXISTS idx_resources_city_state  ON resources(city, state);
+    CREATE INDEX IF NOT EXISTS idx_resources_status      ON resources(live_status);
+    CREATE INDEX IF NOT EXISTS idx_volunteers_city       ON volunteers(city);
+    CREATE INDEX IF NOT EXISTS idx_volunteers_email      ON volunteers(email);
+    CREATE INDEX IF NOT EXISTS idx_alerts_city           ON crisis_alerts(city);
+    CREATE INDEX IF NOT EXISTS idx_alerts_type           ON crisis_alerts(type);
+    CREATE INDEX IF NOT EXISTS idx_alerts_city_expires   ON crisis_alerts(city, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_chat_username         ON chat_messages(username);
+    CREATE INDEX IF NOT EXISTS idx_followthrough_shelter ON follow_through(shelter_id);
+    CREATE INDEX IF NOT EXISTS idx_followthrough_resource ON follow_through(resource_id);
+    CREATE INDEX IF NOT EXISTS idx_legal_flows_issue     ON legal_help_flows(issue);
+    CREATE INDEX IF NOT EXISTS idx_legal_flows_city      ON legal_help_flows(city);
+    CREATE INDEX IF NOT EXISTS idx_popups_city           ON outreach_popups(city);
   `);
 
   const addColumnIfMissing = (table: string, columnDef: string) => {
